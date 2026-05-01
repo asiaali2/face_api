@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
-import face_recognition
-import numpy as np
+from deepface import DeepFace
 import os
 from PIL import Image
 import io
@@ -9,34 +8,11 @@ app = Flask(__name__)
 
 EMPLOYEE_FOLDER = "images/employees"
 
-# 🔥 كاش للوجوه
-known_encodings = {}
-known_names = {}
+# 🔷 تأكد المجلد موجود
+os.makedirs(EMPLOYEE_FOLDER, exist_ok=True)
 
 
-# 🔷 تحميل كل الموظفين مرة واحدة
-def load_all_employees():
-    print("🔄 Loading employee faces...")
-    for file in os.listdir(EMPLOYEE_FOLDER):
-        if file.endswith(".jpg") or file.endswith(".png"):
-            employee_id = os.path.splitext(file)[0]
-            path = os.path.join(EMPLOYEE_FOLDER, file)
-
-            image = face_recognition.load_image_file(path)
-            encodings = face_recognition.face_encodings(image)
-
-            if encodings:
-                known_encodings[employee_id] = encodings[0]
-                known_names[employee_id] = employee_id
-                print(f"✅ Loaded {employee_id}")
-            else:
-                print(f"⚠️ No face found in {file}")
-
-
-# تحميل عند تشغيل السيرفر
-load_all_employees()
-
-
+# 🔷 التحقق من الوجه باستخدام DeepFace
 @app.route('/verify_face', methods=['POST'])
 def verify_face():
     try:
@@ -46,45 +22,34 @@ def verify_face():
         if not employee_id or not file:
             return jsonify({"status": "error", "message": "Missing data"}), 400
 
+        employee_path = os.path.join(EMPLOYEE_FOLDER, f"{employee_id}.jpg")
+
         # 🔴 تحقق من وجود الموظف
-        if employee_id not in known_encodings:
+        if not os.path.exists(employee_path):
             return jsonify({"status": "error", "message": "Employee not found"}), 404
 
-        known_encoding = known_encodings[employee_id]
+        # 🔷 حفظ الصورة المرسلة مؤقتًا
+        temp_path = "temp.jpg"
+        file.save(temp_path)
 
-        # 🔷 قراءة الصورة
-        img_bytes = file.read()
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img = np.array(img)
-
-        # 🔷 استخراج الوجه
-        encodings = face_recognition.face_encodings(img)
-
-        if len(encodings) == 0:
-            return jsonify({"status": "fail", "message": "No face detected"})
-
-        unknown_encoding = encodings[0]
-
-        # 🔷 المقارنة
-        distance = face_recognition.face_distance([known_encoding], unknown_encoding)[0]
-
-        # 🔥 حد الأمان (تقدر تعدله)
-        THRESHOLD = 0.5
-
-        match = distance < THRESHOLD
+        # 🔥 المقارنة
+        result = DeepFace.verify(
+            img1_path=employee_path,
+            img2_path=temp_path,
+            enforce_detection=False
+        )
 
         return jsonify({
             "status": "success",
-            "match": bool(match),
-            "confidence": float(1 - distance),
-            "distance": float(distance)
+            "match": bool(result["verified"]),
+            "distance": float(result["distance"])
         })
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-# 🔷 إضافة موظف جديد (مهم 🔥)
+# 🔷 إضافة موظف جديد
 @app.route('/add_employee', methods=['POST'])
 def add_employee():
     try:
@@ -99,30 +64,18 @@ def add_employee():
         # حفظ الصورة
         file.save(path)
 
-        # استخراج الوجه
-        image = face_recognition.load_image_file(path)
-        encodings = face_recognition.face_encodings(image)
-
-        if len(encodings) == 0:
-            os.remove(path)
-            return jsonify({"status": "fail", "message": "No face detected"})
-
-        # 🔥 إضافة للكاش مباشرة
-        known_encodings[employee_id] = encodings[0]
-
         return jsonify({"status": "success", "message": "Employee added"})
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-# 🔷 إعادة تحميل الوجوه بدون إعادة تشغيل السيرفر
+# 🔷 إعادة تحميل (ما تحتاجها فعليًا الآن)
 @app.route('/reload', methods=['GET'])
 def reload_faces():
-    known_encodings.clear()
-    load_all_employees()
     return jsonify({"status": "reloaded"})
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    import os
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
