@@ -1,5 +1,7 @@
 flask
-face_recognition
-numpy
+deepface
+tensorflow
+opencv-python
 pillow
 gunicorn
+numpy
